@@ -1,0 +1,4 @@
+# Necessário para rodar o programa
+python-calamine==0.8.2   # leitura rápida de .xlsx/.xls/.ods
+Pillow==12.3.0           # validação completa das imagens
+tkinterdnd2==0.6.3       # arrastar e soltar a planilha na janela
