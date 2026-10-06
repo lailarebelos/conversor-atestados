@@ -34,6 +34,7 @@ TIPOS_PLANILHA = [("Planilhas", "*.xlsx *.xlsm *.xls *.ods *.csv"), ("Todos os a
 LARGURA_BARRA = 232
 LARGURA_MAXIMA = 1080  # janela maximizada num monitor grande: os cartões não esticam além disso
 ETAPAS = ["Planilha do dia", "Data da planilha", "Onde salvar", "Exportar"]
+CREDITO = ("Desenvolvido por ", "Laila Rebelo")  # rodapé da barra lateral (e a tela de abertura)
 LEITURA_SEM_AVISOS = "Leitura concluída sem avisos. Cada arquivo ainda é conferido na exportação."
 
 
@@ -309,8 +310,13 @@ class App:
                       tags="desenho")
         y += f.micro.metrics("linespace") + ui.px(8)
         b.create_window(ui.px(8), y, window=self.etapas, anchor="nw", tags="desenho")
-        # rodapé: privacidade e versão
+        # rodapé: privacidade, versão e crédito (o nome um tom mais claro, como na tela de abertura)
         base = a - ui.px(20)
+        inicio, nome = CREDITO
+        b.create_text(x, base, text=inicio, font=f.pequeno, fill=v.BARRA_TEXTO_PENDENTE, anchor="sw", tags="desenho")
+        b.create_text(x + f.pequeno.measure(inicio), base, text=nome, font=f.pequeno, fill=v.BARRA_TEXTO,
+                      anchor="sw", tags=("desenho", "credito"))
+        base -= f.pequeno.metrics("linespace") + ui.px(2)
         b.create_text(x, base, text=f"versão {__version__}", font=f.pequeno, fill=v.BARRA_TEXTO_PENDENTE,
                       anchor="sw", tags="desenho")
         rotulo = "Funciona sem internet"

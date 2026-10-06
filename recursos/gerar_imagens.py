@@ -24,6 +24,7 @@ UI = AQUI / "ui"
 
 BANDEIRA, ESCURO, CITRICO, TINT = "#018444", "#003418", "#78DE1F", "#CEFDAF"
 BRANCO, BORDA, APOIO_BARRA, TEXTO_BARRA = "#FFFFFF", "#CCCCCC", "#B8C6BE", "#EBEFED"
+DISCRETO_BARRA = "#8CA497"  # o tom das etapas pendentes da barra lateral
 ESCALA_MAX = 4  # PNGs em 4x: nítidos até 400% de zoom de tela
 
 
@@ -165,7 +166,10 @@ def svg_abertura(largura: int = 880, altura: int = 495) -> str:
           "Conversor de Atestados</text>"
         f'<text x="64" y="256" font-family="{fonte}" font-size="24" fill="{APOIO_BARRA}">'
         "Da planilha do sistema a um arquivo por colaborador</text>"
-        f'<rect x="64" y="292" width="72" height="4" rx="2" fill="{CITRICO}"/>'
+        # crédito discreto, com o nome um tom mais claro
+        f'<text x="64" y="290" font-family="{fonte}" font-size="17">'
+        f'<tspan fill="{DISCRETO_BARRA}">Desenvolvido por </tspan><tspan fill="{TEXTO_BARRA}">Laila Rebelo</tspan></text>'
+        f'<rect x="64" y="324" width="72" height="4" rx="2" fill="{CITRICO}"/>'
         f'<text x="146" y="421" font-family="{fonte}" font-size="21" fill="{TEXTO_BARRA}">'
           "Abrindo… isso leva alguns segundos</text>"
         "</svg>"
