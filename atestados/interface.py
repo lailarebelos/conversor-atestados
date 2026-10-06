@@ -1,7 +1,10 @@
-"""Interface gráfica (Tkinter): uma tela só, em português, para o uso diário do RH.
+"""Interface gráfica (Tkinter): uma tela só, em português, na identidade Localiza&CO.
 
-O trabalho pesado (ler a planilha, decodificar, validar, gravar) roda numa thread
-separada; a janela só recebe mensagens por uma fila, então nunca congela.
+O trabalho pesado (ler a planilha, decodificar, validar, gravar) roda numa thread separada;
+a janela só recebe mensagens por uma fila, então nunca congela. A aparência segue o acervo
+"Designs Localiza" e as regras de marca de 24/09/2026 (Calibri, cores sólidas, sem sombras,
+cítrico só como acento): barra lateral verde-escura com as etapas, cartões brancos com o eco
+do "L" e botões em Verde Bandeira. O comportamento é o mesmo da versão anterior.
 """
 from __future__ import annotations
 
@@ -12,13 +15,15 @@ import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
-from tkinter import font as tkfont
+from tkinter import filedialog, messagebox
 
 from . import NOME_APP, __version__, datas
+from . import visual as v
 from .exportacao import (Analise, Cancelado, ErroExportacao, PastaJaExiste, Resultado, analisar,
                          exportar)
 from .leitura import ErroLeitura
+from .visual import (Aviso, BarraProgresso, Botao, CaixaCaminho, Campo, Cartao, Etapas, Folhas, Kit,
+                     Selo, Tela, ZonaArrastar, micro, superficie)
 
 try:  # arrastar e soltar; sem ele, a área continua funcionando com clique
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -26,15 +31,15 @@ except Exception:  # noqa: BLE001
     TkinterDnD = None
 
 TIPOS_PLANILHA = [("Planilhas", "*.xlsx *.xlsm *.xls *.ods *.csv"), ("Todos os arquivos", "*.*")]
-AZUL, AZUL_ESCURO, CINZA = "#1F6FB2", "#185A91", "#9AA5B1"
-ZONA, ZONA_ATIVA, BORDA, BORDA_ATIVA = "#EEF4FB", "#DCEBFA", "#B7C6D8", "#1F6FB2"
-TEXTO_SUAVE, LARANJA, VERMELHO, VERDE = "#5B6B7C", "#B45309", "#B91C1C", "#15803D"
+LARGURA_BARRA = 232
+LARGURA_MAXIMA = 1080  # janela maximizada num monitor grande: os cartões não esticam além disso
+ETAPAS = ["Planilha do dia", "Data da planilha", "Onde salvar", "Exportar"]
+LEITURA_SEM_AVISOS = "Leitura concluída sem avisos. Cada arquivo ainda é conferido na exportação."
 
 
 def caminho_recurso(nome: str) -> Path:
     """Arquivo da pasta recursos/, tanto rodando o código quanto dentro do .exe."""
-    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
-    return base / "recursos" / nome
+    return v.pasta_recursos() / nome
 
 
 def criar_janela() -> tk.Tk:
@@ -71,6 +76,8 @@ class App:
         self.analise: Analise | None = None
         self.resultado: Resultado | None = None
         self.exportando = False
+        self.analisando = False
+        self.falha_analise = False
         self.geracao = 0  # descarta resultados de análises antigas
         self.cancelar_analise = threading.Event()
         self.cancelar_exportacao = threading.Event()
@@ -78,6 +85,7 @@ class App:
         self.destino_escolhido = False
         self.data_editada = False
         self._definindo_data = False
+        self.recuo = 0  # margem extra de cada lado quando a janela passa da largura máxima
 
         self.var_status = tk.StringVar(value="Nenhuma planilha selecionada.")
         self.var_avisos = tk.StringVar()
@@ -87,6 +95,9 @@ class App:
         self.var_destino = tk.StringVar()
         self.var_progresso = tk.StringVar()
         self.var_resumo = tk.StringVar()
+        self.var_resumo_ok = tk.StringVar()
+        self.var_resumo_aviso = tk.StringVar()
+        self.var_resumo_gps = tk.StringVar()
 
         self._montar()
         self.var_data.trace_add("write", self._data_mudou)
@@ -100,133 +111,247 @@ class App:
     def _montar(self) -> None:
         r = self.root
         r.title(NOME_APP)
-        self.escala = max(r.winfo_fpixels("1i") / 96, 1.0)  # 1,5 numa tela com zoom de 150%
-        r.minsize(int(600 * self.escala), int(560 * self.escala))
+        r.configure(bg=v.FUNDO)
+        self.ui = ui = Kit(r)
+        self.escala = ui.escala
         try:
             r.iconbitmap(default=str(caminho_recurso("icone.ico")))
         except tk.TclError:
             pass
-        for nome in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):
-            tkfont.nametofont(nome).configure(family="Segoe UI", size=10)
-        estilo = ttk.Style(r)
-        estilo.configure("Titulo.TLabel", font=("Segoe UI", 17, "bold"))
-        estilo.configure("Suave.TLabel", foreground=TEXTO_SUAVE)
-        estilo.configure("Aviso.TLabel", foreground=LARANJA)
-        estilo.configure("Secao.TLabelframe.Label", font=("Segoe UI", 10, "bold"))
+        r.columnconfigure(1, weight=1)
+        r.rowconfigure(1, weight=1)
 
-        base = ttk.Frame(r, padding=(22, 12, 22, 10))
-        base.pack(fill="both", expand=True)
-        base.columnconfigure(0, weight=1)
-        ttk.Label(base, text=NOME_APP, style="Titulo.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(base, text="Transforma a planilha diária de atestados em arquivos, um por colaborador.",
-                  style="Suave.TLabel").grid(row=1, column=0, sticky="w", pady=(0, 8))
+        # barra lateral verde-escura: logo, produto, etapas
+        self.barra = Tela(r, ui, v.VERDE_ESCURO, width=ui.px(LARGURA_BARRA))
+        self.barra.grid(row=0, column=0, rowspan=2, sticky="ns")
+        self.etapas = Etapas(self.barra, ui, ETAPAS, largura=LARGURA_BARRA - 16)
+        self.barra.bind("<Configure>", lambda e: self._desenhar_barra())
 
-        # 1. Planilha do dia: área de arrastar e soltar / clicar
-        sec1 = ttk.LabelFrame(base, text=" 1. Planilha do dia ", style="Secao.TLabelframe", padding=(12, 8, 12, 10))
-        sec1.grid(row=2, column=0, sticky="ew")
-        sec1.columnconfigure(0, weight=1)
-        self.zona = tk.Frame(sec1, bg=ZONA, highlightthickness=2, highlightbackground=BORDA,
-                             highlightcolor=BORDA, cursor="hand2")
-        self.zona.grid(row=0, column=0, sticky="ew")
-        self.zona_titulo = tk.Label(self.zona, bg=ZONA, fg=AZUL, font=("Segoe UI", 12, "bold"), cursor="hand2")
-        self.zona_titulo.pack(padx=16, pady=(14, 2))
-        self.zona_sub = tk.Label(self.zona, bg=ZONA, fg=TEXTO_SUAVE, cursor="hand2")
-        self.zona_sub.pack(padx=16, pady=(0, 14))
-        self._textos_zona()
-        for w in (self.zona, self.zona_titulo, self.zona_sub):
-            w.bind("<Button-1>", lambda e: self.escolher_planilha())
-            w.bind("<Enter>", lambda e: self._realcar_zona(True))
-            w.bind("<Leave>", lambda e: self._realcar_zona(False))
+        # topo branco: nome, selo de status e o monograma L&CO
+        self.topo = Tela(r, ui, v.SUPERFICIE, height=ui.px(56), width=1)
+        self.topo.grid(row=0, column=1, sticky="ew")
+        self.selo = Selo(self.topo, ui)
+        self.topo.bind("<Configure>", lambda e: self._desenhar_topo())
+
+        self.conteudo = conteudo = tk.Frame(r, bg=v.FUNDO)
+        conteudo.grid(row=1, column=1, sticky="nsew", padx=ui.px(24), pady=ui.px(18))
+        # larguras de partida pensadas para caber num notebook; crescem juntas se a janela crescer
+        conteudo.columnconfigure(0, weight=5, minsize=ui.px(408))
+        conteudo.columnconfigure(1, weight=4, minsize=ui.px(328))
+        self._montar_planilha(conteudo)
+        self._montar_data_destino(conteudo)
+        self._montar_exportacao(conteudo)
+        r.bind("<Configure>", self._limitar_largura, add="+")
+
+    def _limitar_largura(self, evento) -> None:
+        if evento.widget is not self.root:
+            return
+        ui = self.ui
+        livre = evento.width - ui.px(LARGURA_BARRA) - 2 * ui.px(24)
+        recuo = max(0, livre - ui.px(LARGURA_MAXIMA)) // 2
+        if recuo != self.recuo:
+            self.recuo = recuo
+            self.conteudo.grid_configure(padx=ui.px(24) + recuo)
+            self._desenhar_topo()
+
+    def _cabecalho(self, mestre, etapa: str, titulo: str) -> tk.Frame:
+        f = self.ui.fontes
+        quadro = tk.Frame(mestre, bg=v.SUPERFICIE)
+        tk.Label(quadro, text=micro(etapa), font=f.micro, fg=v.TEXTO_APOIO, bg=v.SUPERFICIE).pack(anchor="w")
+        tk.Label(quadro, text=titulo, font=f.titulo, fg=v.TEXTO, bg=v.SUPERFICIE).pack(anchor="w")
+        return quadro
+
+    def _montar_planilha(self, conteudo) -> None:
+        ui = self.ui
+        cartao = Cartao(conteudo, ui)
+        cartao.grid(row=0, column=0, sticky="nsew", padx=(0, ui.px(8)))
+        self._cabecalho(cartao.interior, "Etapa 1", "Planilha do dia").pack(fill="x")
+        self.zona = ZonaArrastar(cartao.interior, ui, self.escolher_planilha)
+        self.zona.pack(fill="x", pady=(ui.px(10), 0))
         if self.dnd:
             self.zona.drop_target_register(DND_FILES)
             self.zona.dnd_bind("<<Drop>>", self._ao_soltar)
-            self.zona.dnd_bind("<<DropEnter>>", lambda e: (self._realcar_zona(True), e.action)[1])
-            self.zona.dnd_bind("<<DropLeave>>", lambda e: (self._realcar_zona(False), e.action)[1])
-        self.rotulo_status = ttk.Label(sec1, textvariable=self.var_status)
-        self.rotulo_status.grid(row=1, column=0, sticky="w", pady=(8, 0))
-        self.rotulo_avisos = ttk.Label(sec1, textvariable=self.var_avisos, style="Aviso.TLabel", justify="left")
-        self.rotulo_avisos.grid(row=2, column=0, sticky="w")
+            self.zona.dnd_bind("<<DropEnter>>", lambda e: (self.zona.arrastando(True), e.action)[1])
+            self.zona.dnd_bind("<<DropLeave>>", lambda e: (self.zona.arrastando(False), e.action)[1])
+        self.aviso_planilha = Aviso(cartao.interior, ui)
 
-        # 2. Data
-        sec2 = ttk.LabelFrame(base, text=" 2. Data da planilha ", style="Secao.TLabelframe", padding=(12, 8, 12, 10))
-        sec2.grid(row=3, column=0, sticky="ew", pady=(8, 0))
-        sec2.columnconfigure(2, weight=1)
-        self.entrada_data = ttk.Entry(sec2, textvariable=self.var_data, width=12, font=("Segoe UI", 11),
-                                      justify="center")
-        self.entrada_data.grid(row=0, column=0, sticky="w")
-        ttk.Label(sec2, text="DD/MM/AAAA", style="Suave.TLabel").grid(row=0, column=1, sticky="w", padx=(8, 0))
-        ttk.Label(sec2, textvariable=self.var_origem_data, style="Suave.TLabel").grid(row=0, column=2, sticky="w",
-                                                                                      padx=(12, 0))
-        self.rotulo_pasta = ttk.Label(sec2, textvariable=self.var_pasta)
-        self.rotulo_pasta.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+    def _montar_data_destino(self, conteudo) -> None:
+        ui, f = self.ui, self.ui.fontes
+        cartao = Cartao(conteudo, ui)
+        cartao.grid(row=0, column=1, sticky="nsew", padx=(ui.px(8), 0))
+        i = cartao.interior
+        self._cabecalho(i, "Etapa 2", "Data da planilha").pack(fill="x")
+        linha = tk.Frame(i, bg=v.SUPERFICIE)
+        linha.pack(fill="x", pady=(ui.px(10), 0))
+        self.campo_data = Campo(linha, ui, self.var_data, caracteres=10)
+        self.campo_data.pack(side="left")
+        self.entrada_data = self.campo_data.entrada
+        self.selo_origem = Selo(linha, ui)
+        self.selo_origem.pack(side="left", padx=(ui.px(10), 0))
+        self.linha_pasta = Tela(i, ui, v.SUPERFICIE, height=f.pequeno.metrics("linespace") + ui.px(4), width=1)
+        self.linha_pasta.pack(fill="x", pady=(ui.px(8), 0))
+        self.linha_pasta.bind("<Configure>", lambda e: self._desenhar_linha_pasta())
+        tk.Frame(i, bg=v.BORDA_BAIXA, height=max(1, ui.px(1))).pack(fill="x", pady=ui.px(14))
+        self._cabecalho(i, "Etapa 3", "Onde salvar").pack(fill="x")
+        linha2 = tk.Frame(i, bg=v.SUPERFICIE)
+        linha2.pack(fill="x", pady=(ui.px(10), 0))
+        self.botao_destino = Botao(linha2, ui, "Trocar pasta…", self.escolher_destino, "secundario", altura=40)
+        self.botao_destino.pack(side="right", padx=(ui.px(8), 0))
+        self.caixa_destino = CaixaCaminho(linha2, ui, self.var_destino)
+        self.caixa_destino.pack(side="left", fill="x", expand=True, pady=self.botao_destino.anel)
 
-        # 3. Onde salvar
-        sec3 = ttk.LabelFrame(base, text=" 3. Onde salvar ", style="Secao.TLabelframe", padding=(12, 8, 12, 10))
-        sec3.grid(row=4, column=0, sticky="ew", pady=(8, 0))
-        sec3.columnconfigure(0, weight=1)
-        ttk.Entry(sec3, textvariable=self.var_destino, state="readonly").grid(row=0, column=0, sticky="ew")
-        self.botao_destino = ttk.Button(sec3, text="Trocar pasta…", command=self.escolher_destino)
-        self.botao_destino.grid(row=0, column=1, padx=(8, 0))
+    def _montar_exportacao(self, conteudo) -> None:
+        ui, f = self.ui, self.ui.fontes
+        self.cartao_exportar = cartao = Cartao(conteudo, ui)
+        cartao.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(ui.px(16), 0))
+        i = cartao.interior
+        i.columnconfigure(0, weight=1)
+        tk.Label(i, text=micro("Etapa 4 — Exportar"), font=f.micro, fg=v.TEXTO_APOIO,
+                 bg=v.SUPERFICIE).grid(row=0, column=0, sticky="w")
+        # "Exportar de novo": só aparece no cartão de sucesso
+        self.link_exportar = v.Link(i, ui, "Exportar de novo", self.exportar)
+        i.rowconfigure(0, minsize=self.link_exportar.winfo_reqheight())  # com ou sem o link, mesma altura
+        altura = ui.px(84)  # a mesma altura em todos os estados: a tela não "pula"
 
-        # Exportar
-        acao = ttk.Frame(base)
-        acao.grid(row=5, column=0, sticky="ew", pady=(12, 0))
-        acao.columnconfigure(0, weight=1)
-        self.botao_exportar = tk.Button(acao, text="Exportar atestados", command=self.exportar,
-                                        font=("Segoe UI", 12, "bold"), fg="white", bg=AZUL,
-                                        activebackground=AZUL_ESCURO, activeforeground="white",
-                                        disabledforeground="#EEF1F4", relief="flat", bd=0, padx=20, pady=8)
-        self.botao_exportar.grid(row=0, column=0, sticky="ew")
-        self.botao_cancelar = ttk.Button(acao, text="Cancelar", command=self.cancelar)
-        self.botao_cancelar.grid(row=0, column=1, sticky="ns", padx=(8, 0))
-        self.botao_cancelar.grid_remove()
-        self.barra = ttk.Progressbar(base, mode="determinate")
-        self.barra.grid(row=6, column=0, sticky="ew", pady=(10, 0))
-        self.rotulo_progresso = ttk.Label(base, textvariable=self.var_progresso, style="Suave.TLabel")
-        self.rotulo_progresso.grid(row=7, column=0, sticky="w")
+        # linha de ação: botão principal + área de status (dica, lendo ou progresso)
+        self.linha_acao = tk.Frame(i, bg=v.SUPERFICIE, height=altura)
+        self.linha_acao.pack_propagate(False)
+        self.botao_exportar = Botao(self.linha_acao, ui, "Exportar atestados", self.exportar, "primario", largura=212)
+        self.botao_exportar.pack(side="left")
+        self.area_status = tk.Frame(self.linha_acao, bg=v.SUPERFICIE)
+        self.area_status.pack(side="left", fill="both", expand=True, padx=(ui.px(18), 0))
+        self.status_dica = tk.Label(self.area_status, font=f.corpo, fg=v.TEXTO_APOIO, bg=v.SUPERFICIE,
+                                    anchor="w", justify="left")
+        self.status_lendo = tk.Frame(self.area_status, bg=v.SUPERFICIE)
+        self.folhas_status = Folhas(self.status_lendo, ui, v.SUPERFICIE)
+        self.folhas_status.pack(side="left")
+        tk.Label(self.status_lendo, textvariable=self.var_progresso, font=f.corpo, fg=v.TEXTO_APOIO,
+                 bg=v.SUPERFICIE).pack(side="left", padx=(ui.px(12), 0))
+        self.status_progresso = tk.Frame(self.area_status, bg=v.SUPERFICIE)
+        self.botao_cancelar = Botao(self.status_progresso, ui, "Cancelar", self.cancelar, "secundario", altura=36)
+        self.botao_cancelar.pack(side="right", padx=(ui.px(14), 0))
+        self.rotulo_progresso = tk.Label(self.status_progresso, textvariable=self.var_progresso,
+                                         font=f.corpo_negrito, fg=v.TEXTO, bg=v.SUPERFICIE, width=12, anchor="e")
+        self.rotulo_progresso.pack(side="right", padx=(ui.px(12), 0))
+        self.barra_progresso = BarraProgresso(self.status_progresso, ui)
+        self.barra_progresso.pack(side="left", fill="x", expand=True)
 
-        # Resultado: título, linha verde (exportados), linhas laranja (verificar), GPS
-        self.quadro_resultado = ttk.Frame(base)
-        self.quadro_resultado.grid(row=8, column=0, sticky="ew", pady=(6, 0))
-        self.var_resumo_ok, self.var_resumo_aviso, self.var_resumo_gps = tk.StringVar(), tk.StringVar(), tk.StringVar()
-        self.rotulos_resumo = []
-        for i, (var, cor, fonte) in enumerate(((self.var_resumo, "", ("Segoe UI", 10, "bold")),
-                                               (self.var_resumo_ok, VERDE, None),
-                                               (self.var_resumo_aviso, LARANJA, None),
-                                               (self.var_resumo_gps, TEXTO_SUAVE, None))):
-            rotulo = ttk.Label(self.quadro_resultado, textvariable=var, justify="left", foreground=cor,
-                               **({"font": fonte} if fonte else {}))
-            rotulo.grid(row=i, column=0, sticky="w")
-            self.rotulos_resumo.append(rotulo)
-        botoes = ttk.Frame(self.quadro_resultado)
-        botoes.grid(row=4, column=0, sticky="w", pady=(6, 0))
-        ttk.Button(botoes, text="Abrir pasta", command=self.abrir_pasta).pack(side="left")
-        ttk.Button(botoes, text="Abrir relatório", command=self.abrir_relatorio).pack(side="left", padx=(8, 0))
-        self.quadro_resultado.grid_remove()
+        # cartão de sucesso: balão, resumo em duas linhas e as ações empilhadas à direita
+        self.status_resultado = tk.Frame(i, bg=v.SUPERFICIE, height=altura)
+        self.status_resultado.pack_propagate(False)
+        acoes = tk.Frame(self.status_resultado, bg=v.SUPERFICIE)
+        acoes.pack(side="right", anchor="center")
+        Botao(acoes, ui, "Abrir pasta", self.abrir_pasta, "primario", largura=150, altura=36).pack()
+        Botao(acoes, ui, "Abrir relatório", self.abrir_relatorio, "secundario", largura=150, altura=36).pack(
+            pady=(ui.px(2), 0))
+        self.icone_resultado = tk.Label(self.status_resultado, bg=v.SUPERFICIE)
+        self.icone_resultado.pack(side="left", anchor="center", padx=(0, ui.px(14)))
+        textos = tk.Frame(self.status_resultado, bg=v.SUPERFICIE)
+        textos.pack(side="left", fill="x", expand=True, anchor="center")
+        tk.Label(textos, textvariable=self.var_resumo, font=f.corpo_negrito, fg=v.TEXTO, bg=v.SUPERFICIE,
+                 anchor="w").pack(anchor="w")
+        linha = tk.Frame(textos, bg=v.SUPERFICIE)
+        linha.pack(anchor="w", pady=(ui.px(4), 0))
+        tk.Label(linha, textvariable=self.var_resumo_ok, font=f.pequeno_negrito, fg=v.VERDE_BANDEIRA,
+                 bg=v.SUPERFICIE).pack(side="left")
+        self.selo_resultado = Selo(linha, ui)
+        self.rotulo_gps = tk.Label(linha, textvariable=self.var_resumo_gps, font=f.pequeno, fg=v.TEXTO_APOIO,
+                                   bg=v.SUPERFICIE)
+        self.rotulo_gps.pack(side="left", padx=(ui.px(10), 0))
+        self._mostrar_status("dica")
 
-        base.rowconfigure(9, weight=1)
-        ttk.Label(base, text=f"Funciona sem internet: nenhum dado sai deste computador.   •   versão {__version__}",
-                  style="Suave.TLabel", font=("Segoe UI", 8)).grid(row=10, column=0, sticky="w", pady=(6, 0))
-        # textos longos quebram conforme a largura da janela
-        base.bind("<Configure>", lambda e: [
-            w.configure(wraplength=max(e.width - int(70 * self.escala), 200))
-            for w in (self.rotulo_avisos, self.rotulo_progresso, *self.rotulos_resumo)])
-
-    def _textos_zona(self) -> None:
-        if self.caminho is None:
-            titulo = "Arraste a planilha do dia para cá" if self.dnd else "Clique para escolher a planilha do dia"
-            sub = "ou clique para escolher o arquivo (.xlsx ou .csv)" if self.dnd else "(.xlsx ou .csv)"
+    def _mostrar_status(self, qual: str) -> None:
+        resultado = qual == "resultado"
+        if resultado:
+            self.linha_acao.grid_remove()
+            self.status_resultado.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(self.ui.px(6), 0))
+            self.link_exportar.grid(row=0, column=1, sticky="e")
         else:
-            titulo = self.caminho.name
-            sub = "Para trocar, clique aqui ou arraste outra planilha" if self.dnd else "Clique aqui para trocar"
-        self.zona_titulo.configure(text=titulo)
-        self.zona_sub.configure(text=sub)
+            self.status_resultado.grid_remove()
+            self.link_exportar.grid_remove()
+            self.linha_acao.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(self.ui.px(6), 0))
+            for nome, quadro in (("dica", self.status_dica), ("lendo", self.status_lendo),
+                                 ("progresso", self.status_progresso)):
+                if nome == qual:
+                    quadro.pack(fill="x", expand=True)
+                else:
+                    quadro.pack_forget()
+        if qual == "lendo":
+            self.folhas_status.iniciar()
+        else:
+            self.folhas_status.parar()
 
-    def _realcar_zona(self, ativo: bool) -> None:
-        cor = ZONA_ATIVA if ativo and not self.exportando else ZONA
-        self.zona.configure(bg=cor, highlightbackground=BORDA_ATIVA if ativo else BORDA)
-        self.zona_titulo.configure(bg=cor)
-        self.zona_sub.configure(bg=cor)
+    # ------------------------------------------------------------ desenho ---
+    def _desenhar_barra(self) -> None:
+        b, ui, f = self.barra, self.ui, self.ui.fontes
+        l, a = b.winfo_width(), b.winfo_height()
+        if l < 10 or a < 10:
+            return
+        b.delete("desenho")
+        # o "&" da marca, em contorno discreto, sangrando o canto de baixo à direita (atrás do rodapé)
+        b.create_image(ui.px(104), a - ui.px(150), image=ui.imagens("grafismo_barra", 230, v.VERDE_ESCURO),
+                       anchor="nw", tags="desenho")
+        # canto superior direito arredondado (24 px), apoiado no branco do topo
+        canto = v.canto_arredondado(ui.px(24), 1, v.VERDE_ESCURO, v.SUPERFICIE)
+        b.create_image(l, 0, image=b.guardar("canto", canto), anchor="ne", tags="desenho")
+        x, y = ui.px(20), ui.px(24)
+        b.create_image(x, y, image=ui.imagens("logo_barra", 24, v.VERDE_ESCURO), anchor="nw", tags="desenho")
+        y += ui.px(24 + 22)
+        b.create_text(x, y, text=NOME_APP, font=f.produto, fill="#FFFFFF", anchor="nw", tags="desenho")
+        y += f.produto.metrics("linespace") + ui.px(2)
+        sub = b.create_text(x, y, text="Da planilha do sistema a um arquivo por colaborador", font=f.pequeno,
+                            fill=v.BARRA_APOIO, anchor="nw", width=l - 2 * x, tags="desenho")
+        y = b.bbox(sub)[3] + ui.px(16)
+        b.create_rectangle(ui.px(16), y, l - ui.px(16), y + max(1, ui.px(1)), fill=v.BARRA_LINHA, width=0,
+                           tags="desenho")
+        y += ui.px(16)
+        b.create_text(x, y, text=micro("Progresso"), font=f.micro, fill=v.BARRA_TEXTO_PENDENTE, anchor="nw",
+                      tags="desenho")
+        y += f.micro.metrics("linespace") + ui.px(8)
+        b.create_window(ui.px(8), y, window=self.etapas, anchor="nw", tags="desenho")
+        # rodapé: privacidade e versão
+        base = a - ui.px(20)
+        b.create_text(x, base, text=f"versão {__version__}", font=f.pequeno, fill=v.BARRA_TEXTO_PENDENTE,
+                      anchor="sw", tags="desenho")
+        rotulo = "Funciona sem internet"
+        alto = ui.px(26)
+        largura = f.selo.measure(rotulo) + ui.px(34)
+        topo = base - f.pequeno.metrics("linespace") - ui.px(8) - alto
+        pilula = superficie(largura, alto, (alto / 2,) * 4, v.BARRA_CIRCULO, v.VERDE_ESCURO)
+        b.create_image(x, topo, image=b.guardar("pilula", pilula), anchor="nw", tags="desenho")
+        ponto = superficie(ui.px(8), ui.px(8), (ui.px(4),) * 4, v.VERDE_CITRICO, v.BARRA_CIRCULO)
+        b.create_image(x + ui.px(12), topo + alto / 2, image=b.guardar("ponto", ponto), anchor="w", tags="desenho")
+        b.create_text(x + ui.px(26), topo + alto / 2, text=rotulo, font=f.selo, fill=v.BARRA_TEXTO, anchor="w",
+                      tags="desenho")
+
+    def _desenhar_topo(self) -> None:
+        t, ui, f = self.topo, self.ui, self.ui.fontes
+        l, a = t.winfo_width(), t.winfo_height()
+        if l < 10:
+            return
+        t.delete("desenho")
+        x = ui.px(28) + self.recuo  # alinhado com a coluna dos cartões
+        t.create_text(x, a / 2, text=NOME_APP, font=f.titulo_app, fill=v.TEXTO, anchor="w", tags="desenho")
+        t.create_window(x + f.titulo_app.measure(NOME_APP) + ui.px(14), a / 2, window=self.selo, anchor="w",
+                        tags="desenho")
+        t.create_image(l - ui.px(24) - self.recuo, a / 2, image=ui.imagens("selo_topo", 30, v.SUPERFICIE),
+                       anchor="e", tags="desenho")
+        t.create_rectangle(0, a - max(1, ui.px(1)), l, a, fill=v.BORDA_BAIXA, width=0, tags="desenho")
+
+    def _desenhar_linha_pasta(self) -> None:
+        c, f = self.linha_pasta, self.ui.fontes
+        c.delete("all")
+        data = self._data_valida()
+        if data:
+            inicio = "Será criada a pasta "
+            c.create_text(0, 0, text=inicio, font=f.pequeno, fill=v.TEXTO_APOIO, anchor="nw")
+            c.create_text(f.pequeno.measure(inicio), 0, text=datas.nome_pasta(data), font=f.pequeno_negrito,
+                          fill=v.VERDE_BANDEIRA, anchor="nw")
+        elif self.var_data.get().strip():
+            c.create_text(0, 0, text="Data inválida. Use o formato DD/MM/AAAA.", font=f.pequeno,
+                          fill=v.ERRO_TEXTO, anchor="nw")
+        else:
+            c.create_text(0, 0, text="Formato DD/MM/AAAA", font=f.pequeno, fill=v.TEXTO_MINIMO, anchor="nw")
 
     # ------------------------------------------------------------- planilha ---
     def escolher_planilha(self) -> None:
@@ -239,7 +364,7 @@ class App:
             self.carregar_planilha(caminho)
 
     def _ao_soltar(self, evento):
-        self._realcar_zona(False)
+        self.zona.arrastando(False)
         caminhos = self.root.tk.splitlist(evento.data)
         if caminhos and not self.exportando:
             self.carregar_planilha(caminhos[0])
@@ -253,12 +378,12 @@ class App:
         self.cancelar_analise = threading.Event()
         self.geracao += 1
         self.caminho, self.analise, self.resultado = caminho, None, None
-        self.data_editada = False
-        self._textos_zona()
-        self.quadro_resultado.grid_remove()
-        self.rotulo_status.configure(foreground="")
+        self.analisando, self.falha_analise, self.data_editada = True, False, False
+        self.cartao_exportar.definir_carimbo(False)
         self.var_status.set("Analisando a planilha…")
         self.var_avisos.set("")
+        self._mostrar_avisos()
+        self.zona.definir("analisando", "Lendo a planilha…", caminho.name)
         if not self.destino_escolhido:
             self.var_destino.set(str(caminho.parent))
         data_nome = datas.data_do_nome(caminho.name)
@@ -266,9 +391,8 @@ class App:
             self._definir_data(data_nome, "do nome do arquivo")
         else:
             self._definir_data(None, "procurando a data…")
-        self.barra.configure(mode="indeterminate")
-        self.barra.start(12)
         self.var_progresso.set("Lendo a planilha… (pode levar alguns segundos)")
+        self._mostrar_status("lendo")
         self._atualizar_estado()
         threading.Thread(target=self._trabalho_analise, args=(caminho, self.geracao, self.cancelar_analise),
                          daemon=True).start()
@@ -284,23 +408,40 @@ class App:
             self.fila.put(("analise_erro", geracao, f"Erro inesperado ao analisar a planilha ({type(e).__name__})."))
 
     def _analise_pronta(self, analise: Analise) -> None:
-        self.analise = analise
-        self._parar_barra()
-        self.var_status.set(f"{_plural(analise.total_linhas, 'atestado encontrado', 'atestados encontrados')}"
-                            f" nesta planilha.")
-        self.var_avisos.set("\n".join(f"⚠  {a}" for a in analise.avisos))
+        self.analise, self.analisando = analise, False
+        encontrados = _plural(analise.total_linhas, "atestado encontrado", "atestados encontrados")
+        self.var_status.set(f"{encontrados} nesta planilha.")
+        self.var_avisos.set("\n".join(analise.avisos))
+        self.zona.definir("carregado", self.caminho.name if self.caminho else "", encontrados)
+        self._mostrar_avisos()
         if not self.data_editada:
             self._definir_data(analise.data, analise.origem_data)
+        self.var_progresso.set("")
+        self._mostrar_status("dica")
         self._atualizar_estado()
 
     def _analise_falhou(self, mensagem: str) -> None:
-        self._parar_barra()
+        self.analisando, self.falha_analise = False, True
         self.var_status.set("Não foi possível usar esta planilha.")
-        self.rotulo_status.configure(foreground=VERMELHO)
+        self.zona.definir("erro", "Não foi possível usar esta planilha", "Clique ou arraste outra planilha")
         if not self.data_editada:
             self._definir_data(None, "")
+        self.var_progresso.set("")
+        self._mostrar_status("dica")
         self._atualizar_estado()
         messagebox.showerror(NOME_APP, mensagem, parent=self.root)
+
+    def _mostrar_avisos(self) -> None:
+        texto = self.var_avisos.get()
+        if texto:
+            self.aviso_planilha.definir(texto, "atencao")
+        elif self.analise is not None:  # sem avisos: a confirmação também equilibra o cartão
+            self.aviso_planilha.definir(LEITURA_SEM_AVISOS, "ok")
+        else:
+            self.aviso_planilha.pack_forget()
+            return
+        # recuado como o chip da planilha (que reserva o espaço do contorno de foco): bordas alinhadas
+        self.aviso_planilha.pack(fill="x", padx=self.zona.anel, pady=(self.ui.px(10), 0))
 
     # ------------------------------------------------------------ data/destino ---
     def _definir_data(self, data, origem: str) -> None:
@@ -308,6 +449,7 @@ class App:
         self.var_data.set(datas.formatar(data) if data else "")
         self._definindo_data = False
         self.var_origem_data.set(f"({origem})" if origem else "")
+        self._atualizar_estado()
 
     def _data_mudou(self, *_):
         if not self._definindo_data:
@@ -333,21 +475,82 @@ class App:
 
     def _atualizar_estado(self) -> None:
         data = self._data_valida()
+        texto_data = self.var_data.get().strip()
         if data:
             self.var_pasta.set(f"Será criada a pasta:  {datas.nome_pasta(data)}")
-            self.rotulo_pasta.configure(foreground="")
-        elif self.var_data.get().strip():
+        elif texto_data:
             self.var_pasta.set("Data inválida. Use o formato DD/MM/AAAA, por exemplo 28/09/2026.")
-            self.rotulo_pasta.configure(foreground=VERMELHO)
         else:
             self.var_pasta.set("")
+        self.campo_data.definir_erro(bool(texto_data) and not data)
+        self._desenhar_linha_pasta()
+        origem = self.var_origem_data.get().strip("()")
+        if origem:
+            tipo = "neutro" if origem == "digitada por você" or origem.startswith("procurando") else "aguardando"
+            self.selo_origem.definir(origem, tipo)
+            self.selo_origem.pack(side="left", padx=(self.ui.px(10), 0))
+        else:
+            self.selo_origem.pack_forget()
+
         destino = self.var_destino.get()
-        pode = bool(self.analise and data and destino and Path(destino).is_dir() and not self.exportando)
-        self.botao_exportar.configure(state="normal" if pode else "disabled", bg=AZUL if pode else CINZA,
-                                      cursor="hand2" if pode else "arrow")
+        destino_ok = bool(destino) and Path(destino).is_dir()
+        pode = bool(self.analise and data and destino_ok and not self.exportando)
+        self.botao_exportar.configure(state="normal" if pode else "disabled")
+        self.link_exportar.habilitar(pode)
         estado = "disabled" if self.exportando else "normal"
         self.entrada_data.configure(state=estado)
         self.botao_destino.configure(state=estado)
+        self.zona.bloquear(self.exportando)
+
+        # selo de status do topo
+        r = self.resultado
+        if self.exportando:
+            selo = ("Exportando", "processando")
+        elif r is not None:
+            selo = ("Cancelado", "neutro") if r.cancelado else (
+                ("Concluído · verificar", "atencao") if (r.arquivos_verificar or r.linhas_sem_arquivo)
+                else ("Concluído", "pronto"))
+        elif self.analisando:
+            selo = ("Lendo a planilha", "processando")
+        elif self.falha_analise:
+            selo = ("Planilha com problema", "erro")
+        elif self.analise is None:
+            selo = ("Aguardando planilha", "aguardando")
+        elif not data:
+            selo = ("Revise a data", "atencao")
+        elif not destino_ok:
+            selo = ("Escolha a pasta", "atencao")
+        else:
+            selo = ("Pronto para exportar", "pronto")
+        self.selo.definir(*selo)
+        self._desenhar_topo()
+
+        # etapas da barra lateral
+        feitas = [self.analise is not None, bool(self.analise and data), bool(self.analise and destino_ok),
+                  r is not None and not r.cancelado]
+        estados, ativa = [], False
+        for feita in feitas:
+            if feita:
+                estados.append("feita")
+            elif not ativa:
+                estados.append("ativa")
+                ativa = True
+            else:
+                estados.append("pendente")
+        if self.exportando:
+            estados = ["feita", "feita", "feita", "ativa"]
+        self.etapas.definir(estados)
+
+        # dica da etapa 4
+        if self.analise is None:
+            dica = "Escolha a planilha do dia para começar." if not self.analisando else ""
+        elif not data:
+            dica = "Corrija a data da planilha para continuar."
+        elif not destino_ok:
+            dica = "Escolha uma pasta que exista para salvar os arquivos."
+        else:
+            dica = "Um arquivo por colaborador e o relatório vão para a pasta indicada acima."
+        self.status_dica.configure(text=dica)
 
     # ------------------------------------------------------------ exportação ---
     def exportar(self) -> None:
@@ -369,11 +572,11 @@ class App:
                 return
         self.exportando, self.resultado = True, None
         self.cancelar_exportacao = threading.Event()
-        self.quadro_resultado.grid_remove()
+        self.cartao_exportar.definir_carimbo(False)
         self.botao_cancelar.configure(text="Cancelar", state="normal")
-        self.botao_cancelar.grid()
-        self.barra.configure(mode="determinate", maximum=max(self.analise.total_linhas, 1), value=0)
+        self.barra_progresso.definir(0, imediato=True)
         self.var_progresso.set("Lendo a planilha…")
+        self._mostrar_status("progresso")
         self._atualizar_estado()
         self.thread_exportacao = threading.Thread(
             target=self._trabalho_exportacao,
@@ -399,43 +602,39 @@ class App:
 
     def _exportacao_pronta(self, r: Resultado) -> None:
         self.resultado, self.exportando = r, False
-        self.botao_cancelar.grid_remove()
         total = self.analise.total_linhas if self.analise else r.linhas
         if r.cancelado:
-            self.var_resumo.set(f"Exportação cancelada: {r.linhas} de {total} linhas processadas. "
-                                "O relatório lista o que foi salvo.")
+            self.var_resumo.set(f"Exportação cancelada: {r.linhas} de {total} linhas processadas.")
         else:
             self.var_resumo.set(f"Pronto! {_plural(r.linhas, 'linha processada', 'linhas processadas')} "
                                 f"em {_duracao(r.tempo)}.")
-        self.var_resumo_ok.set(f"✔  {_plural(r.arquivos_ok, 'atestado exportado', 'atestados exportados')}")
+        self.var_resumo_ok.set(_plural(r.arquivos_ok, "atestado exportado", "atestados exportados"))
         avisos = []
         if r.arquivos_verificar:
-            avisos.append(f"⚠  {r.arquivos_verificar} para verificar: arquivos com _VERIFICAR no nome "
-                          "(o motivo está no relatório)")
+            avisos.append(f"{r.arquivos_verificar} para verificar")
         if r.linhas_sem_arquivo:
-            avisos.append(f"⚠  {_plural(r.linhas_sem_arquivo, 'linha ficou', 'linhas ficaram')} sem arquivo "
-                          "(veja o relatório)")
-        self.var_resumo_aviso.set("\n".join(avisos))
-        self.var_resumo_gps.set(f"Localização (GPS) removida de {_plural(r.gps_removido, 'foto', 'fotos')}."
+            avisos.append(_plural(r.linhas_sem_arquivo, "linha sem arquivo", "linhas sem arquivo"))
+        self.var_resumo_aviso.set(" · ".join(avisos))
+        self.selo_resultado.pack_forget()
+        if avisos:  # o selo amarelo vem logo depois do total exportado
+            self.selo_resultado.definir(self.var_resumo_aviso.get(), "atencao")
+            self.selo_resultado.pack(side="left", padx=(self.ui.px(10), 0), before=self.rotulo_gps)
+        self.var_resumo_gps.set(f"· GPS removido de {_plural(r.gps_removido, 'foto', 'fotos')}"
                                 if r.gps_removido else "")
+        problemas = r.arquivos_verificar or r.linhas_sem_arquivo or r.cancelado
+        self.icone_resultado.configure(image=self.ui.imagens("balao_alerta" if problemas else "balao_check", 34,
+                                                             v.SUPERFICIE))
         self.var_progresso.set(f"Arquivos salvos em: {r.pasta}")
-        self.quadro_resultado.grid()
+        self.barra_progresso.definir(1.0 if not r.cancelado else self.barra_progresso._alvo)
+        self.cartao_exportar.definir_carimbo(not r.cancelado)
+        self._mostrar_status("resultado")
         self._atualizar_estado()
-        self._caber_na_janela()
-
-    def _caber_na_janela(self) -> None:
-        """Cresce a janela, se preciso, para o resumo e o rodapé aparecerem inteiros."""
-        self.root.update_idletasks()
-        falta = self.root.winfo_reqheight() - self.root.winfo_height()
-        if falta > 0 and self.root.state() == "normal":
-            altura = min(self.root.winfo_height() + falta, self.root.winfo_screenheight() - 80)
-            self.root.geometry(f"{self.root.winfo_width()}x{altura}")
 
     def _exportacao_falhou(self, mensagem: str) -> None:
         self.exportando = False
-        self.botao_cancelar.grid_remove()
-        self.barra.configure(value=0)
+        self.barra_progresso.definir(0, imediato=True)
         self.var_progresso.set("")
+        self._mostrar_status("dica")
         self._atualizar_estado()
         messagebox.showerror(NOME_APP, mensagem, parent=self.root)
 
@@ -460,7 +659,7 @@ class App:
                 elif tipo == "progresso":
                     _, atual, total, texto = msg
                     if total:
-                        self.barra.configure(maximum=total, value=atual)
+                        self.barra_progresso.definir(atual / total)
                     self.var_progresso.set(texto)
                 elif tipo == "exportacao":
                     self._exportacao_pronta(msg[1])
@@ -469,11 +668,6 @@ class App:
         except queue.Empty:
             pass
         self.root.after(100, self._ler_fila)
-
-    def _parar_barra(self) -> None:
-        self.barra.stop()
-        self.barra.configure(mode="determinate", value=0)
-        self.var_progresso.set("")
 
     def _fechar(self) -> None:
         if self.exportando:
@@ -493,14 +687,14 @@ class App:
 
 
 def posicionar(app: App) -> None:
-    """Tamanho inicial pela escala da tela (com folga para o resumo final), centralizado."""
+    """Tamanho inicial pelo conteúdo (cabe numa tela de notebook), centralizado."""
     root = app.root
     root.update_idletasks()
-    largura = min(max(root.winfo_reqwidth(), int(660 * app.escala)), root.winfo_screenwidth() - 40)
-    altura = min(max(root.winfo_reqheight() + int(150 * app.escala), int(700 * app.escala)),
-                 root.winfo_screenheight() - 80)
+    largura = min(root.winfo_reqwidth(), root.winfo_screenwidth() - app.ui.px(40))
+    altura = min(root.winfo_reqheight(), root.winfo_screenheight() - app.ui.px(80))
+    root.minsize(largura, altura)
     x = (root.winfo_screenwidth() - largura) // 2
-    y = max((root.winfo_screenheight() - altura) // 3, 0)
+    y = max((root.winfo_screenheight() - app.ui.px(48) - altura) // 2, 0)
     root.geometry(f"{largura}x{altura}+{x}+{y}")
 
 

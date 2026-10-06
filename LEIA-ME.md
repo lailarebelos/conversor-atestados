@@ -10,17 +10,28 @@ colaborador** (foto ou PDF), pronto para abrir no Windows.
 
 Dê dois cliques em **`ConversorAtestados.exe`**. Não é preciso instalar nada.
 
-- Primeiro aparece uma janelinha "Abrindo…". A janela do programa abre depois de **alguns segundos
-  (de 5 a 15)**. É normal, **não precisa clicar de novo**.
+- Primeiro aparece a tela de abertura verde, com três folhinhas pulando enquanto o programa
+  carrega. A janela do programa abre depois de **alguns segundos (de 5 a 15)**. É normal, **não
+  precisa clicar de novo**.
 - Se o Windows ou o antivírus bloquear o programa, fale com a TI para liberar.
+
+## A janela
+
+- **À esquerda**, a barra verde mostra as 4 etapas. A etapa da vez fica destacada e as concluídas
+  ganham um ✓.
+- **No topo**, um selo resume a situação: *Aguardando planilha*, *Pronto para exportar*,
+  *Exportando*, *Concluído*…
+- A janela cabe inteira na tela do notebook. Se quiser, maximize.
 
 ## Passo a passo (todo dia)
 
 1. **Baixe a planilha do dia** no sistema (por exemplo, `atestado11092026.xlsx`).
 2. **Abra o Conversor de Atestados.**
-3. **Arraste a planilha para a área azul** da janela, ou clique nela e escolha o arquivo.
+3. **Arraste a planilha para a área verde tracejada** (Etapa 1), ou clique nela e escolha o arquivo.
    O programa lê a planilha e mostra quantos atestados encontrou. Pode demorar alguns segundos
-   (a planilha é grande).
+   (a planilha é grande). Se estiver tudo certo, aparece uma confirmação verde. Se houver algo a
+   observar (por exemplo, um atestado que veio cortado do sistema), um aviso amarelo explica o que
+   vai acontecer.
 4. **Confira a data.** Ela dá nome à pasta (por exemplo, `Atestados_11_09_2026`) e vem preenchida:
    - pelo nome do arquivo (`atestado11092026` → 11/09/2026);
    - se o nome não tiver data, pela data das fotos;
@@ -29,9 +40,10 @@ Dê dois cliques em **`ConversorAtestados.exe`**. Não é preciso instalar nada.
    Ao lado aparece de onde a data veio. Se estiver errada, digite a certa no formato **DD/MM/AAAA**.
 5. **Confira onde salvar.** Por padrão, é a mesma pasta da planilha. Para mudar, clique em **Trocar pasta…**.
 6. Clique em **Exportar atestados** e acompanhe a barra ("45 de 97"). Você pode continuar usando o
-   computador enquanto isso.
+   computador enquanto isso. Se precisar, clique em **Cancelar**.
 7. No fim aparece o resumo. Clique em **Abrir pasta** para ver os arquivos ou em **Abrir relatório**
-   para ver a lista no Excel.
+   para ver a lista no Excel. Para exportar outra vez (por exemplo, depois de corrigir a data), use
+   **Exportar de novo**.
 
 > Funciona mesmo com a planilha aberta no Excel.
 
@@ -94,17 +106,24 @@ Atestado médico é **dado pessoal sensível** (saúde).
     `%PDF` no início e `%%EOF` no fim.
   - `metadados`: data das fotos (EXIF) e remoção do GPS sem recomprimir.
   - `nomes`, `datas` e `exportacao`: nomes de arquivo, datas e o fluxo completo com o relatório.
-- `atestados/interface.py`: tela em Tkinter. O trabalho pesado roda numa thread separada.
+- `atestados/interface.py`: tela em Tkinter, na identidade visual Localiza&CO. O trabalho pesado
+  roda numa thread separada.
+- `atestados/visual.py`: peças visuais (cartões, botões, área de arrastar, barra de progresso,
+  selos). São desenhadas com o Pillow para ficarem nítidas em qualquer zoom de tela.
+- `recursos/`: em `marca/` ficam os SVGs originais da marca, tirados do acervo Designs Localiza.
+  As imagens da tela (`ui/`), o ícone (`icone.ico`), a tela de abertura (`abertura.png`) e o
+  script das folhas que pulam na abertura (`abertura_folhas.tcl`) são gerados a partir deles por
+  `python recursos/gerar_imagens.py`. Esse passo só é necessário se a arte mudar.
 - `app.py`: ponto de entrada do executável.
 
 **Ambiente.** Python 3.13 64 bits. O executável não precisa de Python.
 
 - Dependências de execução: `requirements.txt` (python-calamine, Pillow, tkinterdnd2).
-- Para desenvolver: `requirements-dev.txt`.
+- Para desenvolver: `requirements-dev.txt`. Inclui o resvg-py, usado só para gerar as imagens.
 
 **Testes** (só dados sintéticos, gerados pelos próprios testes):
 
-- `python -m pytest`: 87 testes.
+- `python -m pytest`: 100 testes.
 - `python -m pytest -m lento -s`: desempenho com uma planilha de ~150 MB.
 
 **Gerar o .exe.** Rode `construir_exe.bat`. Ele:

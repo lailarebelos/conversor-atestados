@@ -3,3 +3,4 @@
 pytest==9.1.1
 openpyxl==3.1.5          # só para gerar as planilhas sintéticas dos testes
 pyinstaller==6.22.3
+resvg-py==0.5.0          # só para gerar as imagens da marca (recursos/gerar_imagens.py)

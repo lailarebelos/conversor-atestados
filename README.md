@@ -13,7 +13,7 @@ em uma pasta com **um arquivo por colaborador** (foto ou PDF).
 
 1. Salve o `ConversorAtestados.exe` numa pasta fixa, por exemplo `Documentos\Conversor de Atestados`,
    e abra com dois cliques. A janela leva alguns segundos para abrir.
-2. Arraste a planilha do dia para a área azul.
+2. Arraste a planilha do dia para a área verde tracejada (Etapa 1).
 3. Confira a data e a pasta de destino e clique em **Exportar atestados**.
 
 O passo a passo completo, o que fazer em cada mensagem de problema e os cuidados com os dados
